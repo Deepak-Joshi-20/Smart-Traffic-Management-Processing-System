@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --color-canvas: #100D18;
+  --color-canvas-subtle: #191522;
+  --color-card: #201B29;
+  --color-border-subtle: #393044;
+  --color-accent-blue: #4D91E8;
+  --color-accent-teal: #35B99B;
+  --color-text-primary: #F5F3FA;
+  --color-text-secondary: #A9A0BC;
+}
+
+/* Custom subtle scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #100D18;
+}
+::-webkit-scrollbar-thumb {
+  background: #393044;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4D91E8;
+}
+
+html, body {
+  background-color: #100D18;
+  color: #F5F3FA;
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Examos subtle gradient button & glow utilities */
+.examos-gradient-btn {
+  background: linear-gradient(135deg, #4D91E8 0%, #35B99B 100%);
+  color: #ffffff;
+  transition: all 0.2s ease-in-out;
+}
+.examos-gradient-btn:hover {
+  opacity: 0.95;
+  box-shadow: 0 4px 16px rgba(77, 145, 232, 0.25);
+}
+
+.examos-card {
+  background-color: #201B29;
+  border: 1px solid #393044;
+}
+
+.examos-bg-subtle {
+  background-color: #191522;
+}
+
+/* CCTV Surveillance CRT Scanline & Grain Effects */
+@keyframes cctv-scanline {
+  0% {
+    top: -12%;
+  }
+  100% {
+    top: 112%;
+  }
+}
+
+.animate-cctv-scanline {
+  animation: cctv-scanline 3.2s linear infinite;
+}
+
+@keyframes cctv-flicker {
+  0% { opacity: 0.96; }
+  25% { opacity: 0.99; }
+  50% { opacity: 0.93; }
+  75% { opacity: 1; }
+  100% { opacity: 0.97; }
+}
+
+.animate-cctv-flicker {
+  animation: cctv-flicker 0.18s infinite;
+}
+
+.cctv-crt-lines {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.32) 0px,
+    rgba(0, 0, 0, 0.32) 1.5px,
+    transparent 1.5px,
+    transparent 3px
+  );
+}
+
+

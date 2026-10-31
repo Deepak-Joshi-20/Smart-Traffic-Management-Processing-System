@@ -1,0 +1,6 @@
+{
+  "name": "Smart Traffic Processing System",
+  "description": "Enterprise-grade Intelligent Urban Traffic Operating System featuring real-time interactive SVG city grid, adaptive signal timing, MIMD 4-core multi-processing, 4-stage pipelining with hazard resolution, and MESI cache coherence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
