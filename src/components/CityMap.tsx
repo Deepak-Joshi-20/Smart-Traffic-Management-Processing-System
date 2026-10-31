@@ -30,8 +30,11 @@ import {
   AlertTriangle,
   Monitor,
   Download,
+  Map as MapIcon,
+  Globe,
 } from 'lucide-react';
 import { JunctionData } from '../types';
+import { CctvSurveillanceModal } from './CctvSurveillanceModal';
 
 // Register GSAP MotionPathPlugin
 gsap.registerPlugin(MotionPathPlugin);
@@ -41,6 +44,11 @@ interface CityMapProps {
   onSelectJunction: (junctionId: string) => void;
   onDispatchEmergency: (junctionId: string) => void;
   onUpdateJunctionLoad: (junctionId: string, delta: number) => void;
+  activeLayers?: {
+    heatmap?: boolean;
+    signalStatus?: boolean;
+    emergencyCorridors?: boolean;
+  };
 }
 
 type VehicleType = 'sedan' | 'bus' | 'van' | 'ev' | 'ambulance';
@@ -106,39 +114,29 @@ export const CityMap: React.FC<CityMapProps> = ({
   onSelectJunction,
   onDispatchEmergency,
   onUpdateJunctionLoad,
+  activeLayers,
 }) => {
   const [selectedJunctionId, setSelectedJunctionId] = useState<string>('JUNCT_B');
   const [activeLayer, setActiveLayer] = useState<'traffic' | 'heatmap' | 'cameras' | 'greenwave'>('traffic');
+  const [basemapMode, setBasemapMode] = useState<'carto' | 'satellite' | 'grid'>('carto');
   const [cameraModalJunction, setCameraModalJunction] = useState<JunctionData | null>(null);
   const [isEmergencyActive, setIsEmergencyActive] = useState<boolean>(false);
   const [showSpeedBadges, setShowSpeedBadges] = useState<boolean>(true);
   const [simulationMultiplier, setSimulationMultiplier] = useState<number>(1);
   const [inspectedVehicle, setInspectedVehicle] = useState<VehicleDef | null>(null);
 
-  // CCTV Modal Custom Controls
-  const [cameraAngle, setCameraAngle] = useState<'overhead' | 'north' | 'crosswalk'>('overhead');
-  const [lowResGrayscale, setLowResGrayscale] = useState<boolean>(true);
-  const [scanlinesActive, setScanlinesActive] = useState<boolean>(true);
-  const [snapshotFlash, setSnapshotFlash] = useState<boolean>(false);
-  const [streamTimestamp, setStreamTimestamp] = useState<string>('');
+  // Computed layer activation (respects parent activeLayers if provided, or internal controls)
+  const isHeatmapActive = activeLayers?.heatmap !== undefined ? activeLayers.heatmap : (activeLayer === 'heatmap');
+  const isSignalStatusActive = activeLayers?.signalStatus !== undefined ? activeLayers.signalStatus : false;
+  const isEmergencyCorridorActive = activeLayers?.emergencyCorridors !== undefined
+    ? activeLayers.emergencyCorridors
+    : (activeLayer === 'greenwave' || isEmergencyActive);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const vehicleRefs = useRef<Record<string, SVGGElement | null>>({});
   const emergencyRef = useRef<SVGGElement | null>(null);
   const tweensRef = useRef<Record<string, { tween: gsap.core.Tween; baseDuration: number }>>({});
   const emergencyTweenRef = useRef<gsap.core.Tween | null>(null);
-
-  // Live timer for authentic CCTV OSD timestamp
-  useEffect(() => {
-    if (!cameraModalJunction) return;
-    const interval = setInterval(() => {
-      const d = new Date();
-      const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-      const formatted = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(Math.floor(d.getMilliseconds() / 10))}`;
-      setStreamTimestamp(formatted);
-    }, 80);
-    return () => clearInterval(interval);
-  }, [cameraModalJunction]);
 
   // Layout coordinates for 4 junctions in an 800x480 SVG coordinate space
   const junctionNodes = useMemo(() => {
@@ -342,13 +340,6 @@ export const CityMap: React.FC<CityMapProps> = ({
     }, 8000);
   };
 
-  const handleCaptureSnapshot = () => {
-    setSnapshotFlash(true);
-    setTimeout(() => {
-      setSnapshotFlash(false);
-    }, 220);
-  };
-
   // Render SVG Vehicle Geometry oriented along direction of travel
   const renderVehicleGraphic = (type: VehicleType, color: string) => {
     switch (type) {
@@ -410,84 +401,135 @@ export const CityMap: React.FC<CityMapProps> = ({
   return (
     <div className="space-y-4">
       {/* Map Control & Density Physics Toolbar */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 rounded-2xl bg-[#201B29] border border-[#393044] text-xs shadow-md">
-        {/* Layer Switches */}
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[#A9A0BC] font-medium mr-1 flex items-center gap-1.5">
-            <Layers className="w-4 h-4 text-[#4D91E8]" />
-            <span>Map View:</span>
-          </span>
-          <button
-            onClick={() => setActiveLayer('traffic')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
-              activeLayer === 'traffic'
-                ? 'bg-gradient-to-r from-[#4D91E8] to-[#35B99B] text-white shadow-sm'
-                : 'bg-[#191522] text-[#A9A0BC] hover:text-[#F5F3FA] border border-[#393044]'
-            }`}
-          >
-            Live Flow &amp; Vehicles
-          </button>
-          <button
-            onClick={() => setActiveLayer('heatmap')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
-              activeLayer === 'heatmap'
-                ? 'bg-[#E5A84D] text-[#100D18] font-semibold shadow-sm'
-                : 'bg-[#191522] text-[#A9A0BC] hover:text-[#F5F3FA] border border-[#393044]'
-            }`}
-          >
-            Density Heatmap
-          </button>
-          <button
-            onClick={() => setActiveLayer('cameras')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
-              activeLayer === 'cameras'
-                ? 'bg-[#4D91E8] text-white shadow-sm'
-                : 'bg-[#191522] text-[#A9A0BC] hover:text-[#F5F3FA] border border-[#393044]'
-            }`}
-          >
-            CCTV Sensors
-          </button>
-          <button
-            onClick={() => setActiveLayer('greenwave')}
-            className={`px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
-              activeLayer === 'greenwave'
-                ? 'bg-[#35B99B] text-white shadow-sm'
-                : 'bg-[#191522] text-[#A9A0BC] hover:text-[#F5F3FA] border border-[#393044]'
-            }`}
-          >
-            Green Wave Corridor
-          </button>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 rounded-2xl bg-[#151F24] border border-[#29383A] text-xs shadow-md">
+        {/* Basemap & Layer Switches */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Basemap Switcher */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[#91A19B] font-medium mr-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider">
+              <MapIcon className="w-3.5 h-3.5 text-[#B7F34A]" />
+              <span>Map Style:</span>
+            </span>
+            <div className="flex items-center bg-[#10171B] border border-[#29383A] rounded-xl p-0.5">
+              <button
+                onClick={() => setBasemapMode('carto')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  basemapMode === 'carto'
+                    ? 'bg-[#B7F34A] text-[#0B0F12] shadow-xs'
+                    : 'text-[#91A19B] hover:text-[#F1F5F2]'
+                }`}
+                title="Real Municipal Cartography with named avenues, building footprints, and waterways"
+              >
+                <MapIcon className="w-3.5 h-3.5" />
+                <span>Real Carto Map</span>
+              </button>
+              <button
+                onClick={() => setBasemapMode('satellite')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  basemapMode === 'satellite'
+                    ? 'bg-[#52C7D9] text-[#0B0F12] shadow-xs'
+                    : 'text-[#91A19B] hover:text-[#F1F5F2]'
+                }`}
+                title="High-altitude dark satellite reconnaissance and runway telemetry"
+              >
+                <Globe className="w-3.5 h-3.5" />
+                <span>Satellite Ortho</span>
+              </button>
+              <button
+                onClick={() => setBasemapMode('grid')}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  basemapMode === 'grid'
+                    ? 'bg-[#70D6B4] text-[#0B0F12] shadow-xs'
+                    : 'text-[#91A19B] hover:text-[#F1F5F2]'
+                }`}
+                title="Tactical dark vector blueprint grid"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Tactical Grid</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="h-5 w-px bg-[#29383A] hidden sm:block" />
+
+          {/* Layer Switches */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[#91A19B] font-medium mr-1 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wider">
+              <Layers className="w-3.5 h-3.5 text-[#52C7D9]" />
+              <span>Layers:</span>
+            </span>
+            <button
+              onClick={() => setActiveLayer('traffic')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                activeLayer === 'traffic'
+                  ? 'bg-[#1B292E] text-[#B7F34A] border border-[#B7F34A]/50 shadow-xs'
+                  : 'bg-[#10171B] text-[#91A19B] hover:text-[#F1F5F2] border border-[#29383A]'
+              }`}
+            >
+              Live Flow
+            </button>
+            <button
+              onClick={() => setActiveLayer('heatmap')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                activeLayer === 'heatmap'
+                  ? 'bg-[#F2B84B] text-[#0B0F12] font-semibold shadow-xs'
+                  : 'bg-[#10171B] text-[#91A19B] hover:text-[#F1F5F2] border border-[#29383A]'
+              }`}
+            >
+              Density Heatmap
+            </button>
+            <button
+              onClick={() => setActiveLayer('cameras')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                activeLayer === 'cameras'
+                  ? 'bg-[#52C7D9] text-[#0B0F12] font-semibold shadow-xs'
+                  : 'bg-[#10171B] text-[#91A19B] hover:text-[#F1F5F2] border border-[#29383A]'
+              }`}
+            >
+              CCTV Feeds
+            </button>
+            <button
+              onClick={() => setActiveLayer('greenwave')}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                activeLayer === 'greenwave'
+                  ? 'bg-[#70D6B4] text-[#0B0F12] font-semibold shadow-xs'
+                  : 'bg-[#10171B] text-[#91A19B] hover:text-[#F1F5F2] border border-[#29383A]'
+              }`}
+            >
+              Green Wave
+            </button>
+          </div>
         </div>
 
         {/* Speed Badges Toggle & GSAP Simulation Speed Controls */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setShowSpeedBadges((prev) => !prev)}
-            className={`px-2.5 py-1.5 rounded-lg border font-mono transition-colors cursor-pointer flex items-center gap-1.5 ${
+            className={`px-2.5 py-1 rounded-lg border font-mono text-xs transition-colors cursor-pointer flex items-center gap-1.5 ${
               showSpeedBadges
-                ? 'bg-[#191522] text-[#35B99B] border-[#35B99B]/40'
-                : 'bg-[#191522] text-[#A9A0BC] border-[#393044]'
+                ? 'bg-[#10171B] text-[#B7F34A] border-[#B7F34A]/40'
+                : 'bg-[#10171B] text-[#91A19B] border-[#29383A]'
             }`}
             title="Toggle speed velocity indicators along arterial corridors"
           >
             <Gauge className="w-3.5 h-3.5" />
-            <span>Velocity Badges: {showSpeedBadges ? 'ON' : 'OFF'}</span>
+            <span>Velocity: {showSpeedBadges ? 'ON' : 'OFF'}</span>
           </button>
 
           {/* Simulation multiplier toggle */}
-          <div className="flex items-center bg-[#191522] border border-[#393044] rounded-lg p-0.5 font-mono">
+          <div className="flex items-center bg-[#10171B] border border-[#29383A] rounded-xl p-0.5 font-mono">
             <button
               onClick={() => setSimulationMultiplier(1)}
-              className={`px-2 py-1 rounded text-[11px] cursor-pointer transition-colors ${
-                simulationMultiplier === 1 ? 'bg-[#4D91E8] text-white font-bold' : 'text-[#A9A0BC]'
+              className={`px-2.5 py-1 rounded-lg text-xs cursor-pointer transition-colors ${
+                simulationMultiplier === 1 ? 'bg-[#B7F34A] text-[#0B0F12] font-bold' : 'text-[#91A19B]'
               }`}
             >
               1× Real
             </button>
             <button
               onClick={() => setSimulationMultiplier(2)}
-              className={`px-2 py-1 rounded text-[11px] cursor-pointer transition-colors ${
-                simulationMultiplier === 2 ? 'bg-[#35B99B] text-white font-bold' : 'text-[#A9A0BC]'
+              className={`px-2.5 py-1 rounded-lg text-xs cursor-pointer transition-colors ${
+                simulationMultiplier === 2 ? 'bg-[#52C7D9] text-[#0B0F12] font-bold' : 'text-[#91A19B]'
               }`}
             >
               2× Speed
@@ -498,14 +540,14 @@ export const CityMap: React.FC<CityMapProps> = ({
           <button
             onClick={handleDispatchEmergencyClick}
             disabled={isEmergencyActive}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-medium transition-all shadow-sm cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all shadow-sm cursor-pointer ${
               isEmergencyActive
-                ? 'bg-[#3A1C24] text-[#E55353] border border-[#5E2734] cursor-not-allowed'
-                : 'bg-[#E55353] hover:bg-[#E55353]/90 text-white shadow-rose-950/40'
+                ? 'bg-[#3A1C24] text-[#F06464] border border-[#F06464]/40 cursor-not-allowed'
+                : 'bg-[#F06464] hover:bg-[#F06464]/90 text-white shadow-rose-950/40'
             }`}
           >
             <Siren className={`w-3.5 h-3.5 ${isEmergencyActive ? 'animate-bounce' : ''}`} />
-            <span>{isEmergencyActive ? 'Ambulance Priority Active' : 'Dispatch Emergency Vehicle'}</span>
+            <span>{isEmergencyActive ? 'Priority Active' : 'Dispatch Ambulance'}</span>
           </button>
         </div>
       </div>
@@ -617,122 +659,495 @@ export const CityMap: React.FC<CityMapProps> = ({
             <path id="path-diag-cb" d="M 230 350 L 375 252 A 28 28 0 0 1 425 228 L 570 130" fill="none" opacity="0" />
             <path id="path-roundabout-orbit" d="M 400 214 A 26 26 0 1 1 399.9 214" fill="none" opacity="0" />
             <path id="path-emergency" d="M 230 124 L 570 124 L 576 350" fill="none" opacity="0" />
+
+            {/* Heatmap Thermal Blur Filter */}
+            <filter id="heat-glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="7" />
+            </filter>
+
+            {/* Real Cartography Water Wave Pattern */}
+            <pattern id="water-waves" width="28" height="14" patternUnits="userSpaceOnUse">
+              <path d="M 0 7 Q 7 3 14 7 T 28 7" fill="none" stroke="#1C384C" strokeWidth="0.8" opacity="0.6" />
+            </pattern>
+
+            {/* Satellite Grid Quadrant Pattern */}
+            <pattern id="satellite-mesh" width="40" height="40" patternUnits="userSpaceOnUse">
+              <rect width="40" height="40" fill="none" stroke="#16252E" strokeWidth="0.5" strokeDasharray="3 3" />
+            </pattern>
           </defs>
 
-          {/* City Blocks Background Grid */}
-          <rect width="800" height="480" fill="url(#city-blocks)" />
+          {/* 0. BASEMAP LAYER: Real Carto Map vs Satellite Ortho vs Tactical Grid */}
+          {basemapMode === 'carto' && (
+            <g id="basemap-real-carto">
+              {/* Municipal Base Canvas */}
+              <rect width="800" height="480" fill="#0C141A" />
 
-          {/* Subtle River / Canal Accent passing through center */}
-          <path
-            d="M 0 240 C 200 230, 300 260, 400 250 C 500 240, 600 270, 800 260"
-            fill="none"
-            stroke="#171A2E"
-            strokeWidth="28"
-            strokeLinecap="round"
-          />
-          <path
-            d="M 0 240 C 200 230, 300 260, 400 250 C 500 240, 600 270, 800 260"
-            fill="none"
-            stroke="#212645"
-            strokeWidth="4"
-            strokeDasharray="12 12"
-          />
+              {/* Urban Zoning Parcel Blocks (Building Footprints & Commercial Parcels) */}
+              {/* Northwest Sector (Residential & Mixed Use) */}
+              <rect x="40" y="30" width="70" height="55" rx="3" fill="#131E26" stroke="#1F323E" strokeWidth="0.8" />
+              <rect x="120" y="30" width="75" height="55" rx="3" fill="#131E26" stroke="#1F323E" strokeWidth="0.8" />
+              <rect x="40" y="170" width="60" height="45" rx="3" fill="#131E26" stroke="#1F323E" strokeWidth="0.8" />
+              <rect x="110" y="170" width="75" height="45" rx="3" fill="#131E26" stroke="#1F323E" strokeWidth="0.8" />
+
+              {/* Northeast Sector (Downtown Financial Core Towers) */}
+              <rect x="615" y="30" width="65" height="55" rx="3" fill="#15242F" stroke="#233B4D" strokeWidth="0.8" />
+              <rect x="690" y="30" width="70" height="55" rx="3" fill="#15242F" stroke="#233B4D" strokeWidth="0.8" />
+              <rect x="615" y="170" width="70" height="45" rx="3" fill="#15242F" stroke="#233B4D" strokeWidth="0.8" />
+              <rect x="695" y="170" width="65" height="45" rx="3" fill="#15242F" stroke="#233B4D" strokeWidth="0.8" />
+
+              {/* Southwest Sector (Tech Innovation Campus & University) */}
+              <rect x="40" y="270" width="75" height="50" rx="3" fill="#122026" stroke="#1F3540" strokeWidth="0.8" />
+              <rect x="125" y="270" width="70" height="50" rx="3" fill="#122026" stroke="#1F3540" strokeWidth="0.8" />
+              <rect x="40" y="380" width="65" height="60" rx="3" fill="#122026" stroke="#1F3540" strokeWidth="0.8" />
+              <rect x="115" y="380" width="80" height="60" rx="3" fill="#122026" stroke="#1F3540" strokeWidth="0.8" />
+
+              {/* Southeast Sector (Airport Freight & Industrial Logistics Terminals) */}
+              <rect x="615" y="270" width="75" height="50" rx="3" fill="#141E24" stroke="#22333D" strokeWidth="0.8" />
+              <rect x="700" y="270" width="65" height="50" rx="3" fill="#141E24" stroke="#22333D" strokeWidth="0.8" />
+              <rect x="615" y="380" width="65" height="60" rx="3" fill="#141E24" stroke="#22333D" strokeWidth="0.8" />
+              <rect x="690" y="380" width="75" height="60" rx="3" fill="#141E24" stroke="#22333D" strokeWidth="0.8" />
+
+              {/* Urban Green Spaces & Parks */}
+              {/* Riverside Botanical Arboretum */}
+              <rect x="270" y="275" width="95" height="45" rx="6" fill="#0E231B" stroke="#1B4434" strokeWidth="1" />
+              <text x="317" y="302" textAnchor="middle" fontSize="8" fill="#70D6B4" opacity="0.8" fontFamily="sans-serif">
+                ARBORETUM PARK
+              </text>
+
+              {/* Waterfront Promenade Park */}
+              <rect x="435" y="160" width="95" height="45" rx="6" fill="#0E231B" stroke="#1B4434" strokeWidth="1" />
+              <text x="482" y="187" textAnchor="middle" fontSize="8" fill="#70D6B4" opacity="0.8" fontFamily="sans-serif">
+                RIVERSIDE ESPLANADE
+              </text>
+
+              {/* Hudson / Metro Marina Waterway (Realistic Channel & Bay Shoreline) */}
+              <path
+                d="M 0 235 C 160 215, 270 260, 400 245 C 530 230, 640 270, 800 250 L 800 290 C 640 310, 530 270, 400 285 C 270 300, 160 255, 0 275 Z"
+                fill="#091823"
+                stroke="#163143"
+                strokeWidth="1.5"
+              />
+              <path
+                d="M 0 235 C 160 215, 270 260, 400 245 C 530 230, 640 270, 800 250 L 800 290 C 640 310, 530 270, 400 285 C 270 300, 160 255, 0 275 Z"
+                fill="url(#water-waves)"
+              />
+              {/* Marina Docks at East Bay */}
+              <line x1="720" y1="262" x2="775" y2="262" stroke="#25465C" strokeWidth="2.5" />
+              <line x1="735" y1="256" x2="735" y2="268" stroke="#25465C" strokeWidth="1.5" />
+              <line x1="755" y1="256" x2="755" y2="268" stroke="#25465C" strokeWidth="1.5" />
+              <text x="745" y="250" textAnchor="middle" fontSize="7.5" fill="#52C7D9" opacity="0.75" fontFamily="monospace">
+                MARINA SLIPS
+              </text>
+            </g>
+          )}
+
+          {basemapMode === 'satellite' && (
+            <g id="basemap-satellite-ortho">
+              {/* Satellite Dark Ground */}
+              <rect width="800" height="480" fill="#080F13" />
+              <rect width="800" height="480" fill="url(#satellite-mesh)" opacity="0.6" />
+
+              {/* Waterway in Dark Satellite Infrared */}
+              <path
+                d="M 0 235 C 160 215, 270 260, 400 245 C 530 230, 640 270, 800 250 L 800 290 C 640 310, 530 270, 400 285 C 270 300, 160 255, 0 275 Z"
+                fill="#060C10"
+                stroke="#1B323D"
+                strokeWidth="2"
+              />
+
+              {/* Airport Runway Complex near Junction D */}
+              <g transform="translate(620, 390)">
+                <rect x="0" y="0" width="150" height="26" fill="#141E24" stroke="#2A404E" strokeWidth="1" />
+                <line x1="10" y1="13" x2="140" y2="13" stroke="#F1F5F2" strokeWidth="1.5" strokeDasharray="12 8" opacity="0.7" />
+                <text x="18" y="17" fontSize="8.5" fontWeight="bold" fill="#F1F5F2" opacity="0.8" fontFamily="monospace">
+                  09L
+                </text>
+                <text x="125" y="17" fontSize="8.5" fontWeight="bold" fill="#F1F5F2" opacity="0.8" fontFamily="monospace">
+                  27R
+                </text>
+              </g>
+
+              {/* Central Hub Satellite Radar Rings */}
+              <circle cx="400" cy="240" r="85" fill="none" stroke="#52C7D9" strokeWidth="0.8" strokeDasharray="4 6" opacity="0.25" />
+              <circle cx="400" cy="240" r="170" fill="none" stroke="#52C7D9" strokeWidth="0.6" strokeDasharray="4 6" opacity="0.15" />
+              <circle cx="400" cy="240" r="260" fill="none" stroke="#52C7D9" strokeWidth="0.5" strokeDasharray="4 8" opacity="0.1" />
+
+              {/* GPS Coordinates HUD Overlay on Satellite */}
+              <g transform="translate(25, 460)">
+                <text fontSize="8.5" fill="#52C7D9" fontFamily="monospace" opacity="0.75">
+                  LAT 37°46'31.2"N · LON 122°25'08.4"W · ALT 42m · ORBIT SAT-04
+                </text>
+              </g>
+            </g>
+          )}
+
+          {basemapMode === 'grid' && (
+            <g id="basemap-tactical-grid">
+              <rect width="800" height="480" fill="url(#city-blocks)" />
+              <path
+                d="M 0 240 C 200 230, 300 260, 400 250 C 500 240, 600 270, 800 260"
+                fill="none"
+                stroke="#171A2E"
+                strokeWidth="28"
+                strokeLinecap="round"
+              />
+              <path
+                d="M 0 240 C 200 230, 300 260, 400 250 C 500 240, 600 270, 800 260"
+                fill="none"
+                stroke="#212645"
+                strokeWidth="4"
+                strokeDasharray="12 12"
+              />
+            </g>
+          )}
 
           {/* Road Highways Connecting the 4 Junctions */}
-          <line x1="230" y1="130" x2="570" y2="130" stroke="#251E33" strokeWidth="24" strokeLinecap="round" />
-          <line x1="230" y1="130" x2="570" y2="130" stroke="#393044" strokeWidth="2" strokeDasharray="8 8" />
-          <line x1="230" y1="350" x2="570" y2="350" stroke="#251E33" strokeWidth="24" strokeLinecap="round" />
-          <line x1="230" y1="350" x2="570" y2="350" stroke="#393044" strokeWidth="2" strokeDasharray="8 8" />
-          <line x1="230" y1="130" x2="230" y2="350" stroke="#251E33" strokeWidth="24" strokeLinecap="round" />
-          <line x1="230" y1="130" x2="230" y2="350" stroke="#393044" strokeWidth="2" strokeDasharray="8 8" />
-          <line x1="570" y1="130" x2="570" y2="350" stroke="#251E33" strokeWidth="24" strokeLinecap="round" />
-          <line x1="570" y1="130" x2="570" y2="350" stroke="#393044" strokeWidth="2" strokeDasharray="8 8" />
+          {/* North Highway (I-94 Metropolitan Expressway) */}
+          <line x1="230" y1="130" x2="570" y2="130" stroke="#18252E" strokeWidth="26" strokeLinecap="round" />
+          <line x1="230" y1="130" x2="570" y2="130" stroke="#F5BE58" strokeWidth="1.4" opacity="0.9" />
+          <line x1="230" y1="124" x2="570" y2="124" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
+          <line x1="230" y1="136" x2="570" y2="136" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
+
+          {/* South Highway (Route 101 Arterial Parkway) */}
+          <line x1="230" y1="350" x2="570" y2="350" stroke="#18252E" strokeWidth="26" strokeLinecap="round" />
+          <line x1="230" y1="350" x2="570" y2="350" stroke="#F5BE58" strokeWidth="1.4" opacity="0.9" />
+          <line x1="230" y1="344" x2="570" y2="344" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
+          <line x1="230" y1="356" x2="570" y2="356" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
+
+          {/* West Highway (Grand Central Boulevard) */}
+          <line x1="230" y1="130" x2="230" y2="350" stroke="#18252E" strokeWidth="26" strokeLinecap="round" />
+          <line x1="230" y1="130" x2="230" y2="350" stroke="#F5BE58" strokeWidth="1.4" opacity="0.9" />
+          <line x1="224" y1="130" x2="224" y2="350" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
+          <line x1="236" y1="130" x2="236" y2="350" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
+
+          {/* East Highway (Port Logistics Viaduct) */}
+          <line x1="570" y1="130" x2="570" y2="350" stroke="#18252E" strokeWidth="26" strokeLinecap="round" />
+          <line x1="570" y1="130" x2="570" y2="350" stroke="#F5BE58" strokeWidth="1.4" opacity="0.9" />
+          <line x1="564" y1="130" x2="564" y2="350" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
+          <line x1="576" y1="130" x2="576" y2="350" stroke="#F1F5F2" strokeWidth="1" strokeDasharray="6 6" opacity="0.35" />
 
           {/* Diagonal Cross Connectors */}
-          <line x1="230" y1="130" x2="570" y2="350" stroke="#1D1728" strokeWidth="14" strokeLinecap="round" />
-          <line x1="570" y1="130" x2="230" y2="350" stroke="#1D1728" strokeWidth="14" strokeLinecap="round" />
+          <line x1="230" y1="130" x2="570" y2="350" stroke="#141F26" strokeWidth="16" strokeLinecap="round" />
+          <line x1="230" y1="130" x2="570" y2="350" stroke="#29383A" strokeWidth="1.2" strokeDasharray="8 8" />
+          <line x1="570" y1="130" x2="230" y2="350" stroke="#141F26" strokeWidth="16" strokeLinecap="round" />
+          <line x1="570" y1="130" x2="230" y2="350" stroke="#29383A" strokeWidth="1.2" strokeDasharray="8 8" />
 
           {/* Center Traffic Roundabout Circle */}
-          <circle cx="400" cy="240" r="38" fill="none" stroke="#251E33" strokeWidth="16" />
-          <circle cx="400" cy="240" r="38" fill="none" stroke="#393044" strokeWidth="1.5" strokeDasharray="5 5" />
-          <circle cx="400" cy="240" r="28" fill="#191522" stroke="#393044" strokeWidth="1.5" />
+          <circle cx="400" cy="240" r="38" fill="none" stroke="#18252E" strokeWidth="18" />
+          <circle cx="400" cy="240" r="38" fill="none" stroke="#F5BE58" strokeWidth="1.2" strokeDasharray="6 6" />
+          <circle cx="400" cy="240" r="28" fill="#10171B" stroke="#29383A" strokeWidth="1.5" />
           <text
             x="400"
             y="244"
             textAnchor="middle"
             fontSize="10"
-            fontWeight="600"
-            fill="#A9A0BC"
-            fontFamily="sans-serif"
+            fontWeight="700"
+            fill="#B7F34A"
+            fontFamily="JetBrains Mono, monospace"
           >
             Central Hub
           </text>
 
-          {/* Heatmap Overlay Layer (if active) */}
-          {activeLayer === 'heatmap' && (
-            <g opacity="0.8">
+          {/* Geographic Real Street Name Labels (Only shown in Real Carto or Satellite mode) */}
+          {(basemapMode === 'carto' || basemapMode === 'satellite') && (
+            <g id="geographic-street-labels" className="pointer-events-none select-none">
+              {/* North Expressway Label & Shield */}
+              <g transform="translate(355, 108)">
+                <rect x="-42" y="-11" width="84" height="15" rx="3" fill="#10171B" stroke="#52C7D9" strokeWidth="1" opacity="0.9" />
+                <text x="0" y="0" textAnchor="middle" fontSize="8" fontWeight="bold" fill="#52C7D9" fontFamily="monospace">
+                  I-94 METRO EXPY
+                </text>
+              </g>
+
+              {/* South Parkway Label & Shield */}
+              <g transform="translate(355, 375)">
+                <rect x="-40" y="-11" width="80" height="15" rx="3" fill="#10171B" stroke="#70D6B4" strokeWidth="1" opacity="0.9" />
+                <text x="0" y="0" textAnchor="middle" fontSize="8" fontWeight="bold" fill="#70D6B4" fontFamily="monospace">
+                  RT-101 ARTERIAL
+                </text>
+              </g>
+
+              {/* West Avenue Label */}
+              <g transform="translate(195, 240) rotate(-90)">
+                <text x="0" y="0" textAnchor="middle" fontSize="8" fontWeight="bold" fill="#91A19B" opacity="0.85" fontFamily="monospace" letterSpacing="1">
+                  GRAND CENTRAL BLVD
+                </text>
+              </g>
+
+              {/* East Avenue Label */}
+              <g transform="translate(605, 240) rotate(90)">
+                <text x="0" y="0" textAnchor="middle" fontSize="8" fontWeight="bold" fill="#91A19B" opacity="0.85" fontFamily="monospace" letterSpacing="1">
+                  AIRPORT PORT VIADUCT
+                </text>
+              </g>
+            </g>
+          )}
+
+          {/* 1. LAYER: Congestion Heatmap Layer (if active) */}
+          {isHeatmapActive && (
+            <g id="layer-congestion-heatmap" className="transition-opacity duration-300">
+              {/* Thermal Corridor Bands with Glow */}
               <line
                 x1="230"
                 y1="130"
                 x2="570"
                 y2="130"
-                stroke={corridors.north.status === 'Congested' ? '#E55353' : corridors.north.status === 'Moderate' ? '#E5A84D' : '#35B99B'}
-                strokeWidth="12"
+                stroke={corridors.north.status === 'Congested' ? '#F06464' : corridors.north.status === 'Moderate' ? '#F2B84B' : '#71D49A'}
+                strokeWidth="18"
                 strokeLinecap="round"
+                filter="url(#heat-glow)"
+                opacity="0.65"
               />
               <line
                 x1="570"
                 y1="130"
                 x2="570"
                 y2="350"
-                stroke={corridors.east.status === 'Congested' ? '#E55353' : corridors.east.status === 'Moderate' ? '#E5A84D' : '#35B99B'}
-                strokeWidth="12"
+                stroke={corridors.east.status === 'Congested' ? '#F06464' : corridors.east.status === 'Moderate' ? '#F2B84B' : '#71D49A'}
+                strokeWidth="18"
                 strokeLinecap="round"
+                filter="url(#heat-glow)"
+                opacity="0.65"
               />
               <line
                 x1="230"
                 y1="350"
                 x2="570"
                 y2="350"
-                stroke={corridors.south.status === 'Congested' ? '#E55353' : corridors.south.status === 'Moderate' ? '#E5A84D' : '#35B99B'}
-                strokeWidth="14"
+                stroke={corridors.south.status === 'Congested' ? '#F06464' : corridors.south.status === 'Moderate' ? '#F2B84B' : '#71D49A'}
+                strokeWidth="18"
                 strokeLinecap="round"
+                filter="url(#heat-glow)"
+                opacity="0.65"
               />
               <line
                 x1="230"
                 y1="130"
                 x2="230"
                 y2="350"
-                stroke={corridors.west.status === 'Congested' ? '#E55353' : corridors.west.status === 'Moderate' ? '#E5A84D' : '#35B99B'}
-                strokeWidth="12"
+                stroke={corridors.west.status === 'Congested' ? '#F06464' : corridors.west.status === 'Moderate' ? '#F2B84B' : '#71D49A'}
+                strokeWidth="18"
                 strokeLinecap="round"
+                filter="url(#heat-glow)"
+                opacity="0.65"
               />
+
+              {/* Radial Thermal Congestion Footprint Bubbles at each Node */}
+              {junctionNodes.map((node) => {
+                const heatColor =
+                  node.status === 'Congested'
+                    ? '#F06464'
+                    : node.status === 'Moderate'
+                    ? '#F2B84B'
+                    : '#71D49A';
+                const heatRadius = Math.min(52, Math.max(26, node.load * 0.42));
+                return (
+                  <g key={`heat-node-${node.id}`}>
+                    <circle
+                      cx={node.x}
+                      cy={node.y}
+                      r={heatRadius}
+                      fill={heatColor}
+                      filter="url(#heat-glow)"
+                      opacity="0.45"
+                    />
+                    {/* Heatmap Queue Density Floating Badge */}
+                    <g transform={`translate(${node.x - 36}, ${node.y - 48})`}>
+                      <rect
+                        width="72"
+                        height="18"
+                        rx="5"
+                        fill="#0B0F12"
+                        stroke={heatColor}
+                        strokeWidth="1.2"
+                      />
+                      <text
+                        x="36"
+                        y="12"
+                        textAnchor="middle"
+                        fontSize="8.5"
+                        fontWeight="700"
+                        fill={heatColor}
+                        fontFamily="JetBrains Mono, monospace"
+                      >
+                        HEAT {Math.round((node.load / node.queueThreshold) * 100)}%
+                      </text>
+                    </g>
+                  </g>
+                );
+              })}
             </g>
           )}
 
-          {/* Green Wave Corridor Layer (if active) */}
-          {activeLayer === 'greenwave' && (
-            <g>
-              <line
-                x1="230"
-                y1="130"
-                x2="570"
-                y2="130"
-                stroke="#35B99B"
-                strokeWidth="10"
+          {/* 2. LAYER: Emergency Corridors Highlight Layer (if active) */}
+          {isEmergencyCorridorActive && (
+            <g id="layer-emergency-corridors" className="transition-opacity duration-300">
+              {/* Wide Glowing Clearance Path along North Expressway (A <-> B) and East Corridor (B <-> D) */}
+              <path
+                d="M 230 124 L 570 124 L 576 350"
+                fill="none"
+                stroke="#52C7D9"
+                strokeWidth="16"
                 strokeLinecap="round"
-                opacity="0.85"
+                strokeLinejoin="round"
+                opacity="0.35"
+                filter="url(#heat-glow)"
               />
-              <line
-                x1="570"
-                y1="130"
-                x2="570"
-                y2="350"
-                stroke="#35B99B"
-                strokeWidth="10"
+              <path
+                d="M 230 124 L 570 124 L 576 350"
+                fill="none"
+                stroke="#F06464"
+                strokeWidth="3.5"
                 strokeLinecap="round"
-                opacity="0.85"
-              />
+                strokeDasharray="10 8"
+              >
+                <animate
+                  attributeName="stroke-dashoffset"
+                  values="0;-36"
+                  dur="1.1s"
+                  repeatCount="indefinite"
+                />
+              </path>
+
+              {/* Emergency Corridor HUD Banner Pill */}
+              <g transform="translate(400, 78)">
+                <rect
+                  x="-95"
+                  y="-11"
+                  width="190"
+                  height="22"
+                  rx="6"
+                  fill="#0B0F12"
+                  stroke="#F06464"
+                  strokeWidth="1.5"
+                />
+                <circle cx="-80" cy="0" r="3.5" fill="#F06464">
+                  <animate attributeName="opacity" values="1;0.2;1" dur="0.6s" repeatCount="indefinite" />
+                </circle>
+                <text
+                  x="5"
+                  y="4"
+                  textAnchor="middle"
+                  fill="#F06464"
+                  fontSize="9"
+                  fontWeight="700"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  ACTIVE EMERGENCY CORRIDOR
+                </text>
+              </g>
+
+              {/* Siren Pulse Rings at Node A, B, and D */}
+              {[
+                { x: 230, y: 124 },
+                { x: 570, y: 124 },
+                { x: 576, y: 350 },
+              ].map((pt, idx) => (
+                <circle
+                  key={`siren-ring-${idx}`}
+                  cx={pt.x}
+                  cy={pt.y}
+                  r="24"
+                  fill="none"
+                  stroke="#F06464"
+                  strokeWidth="2"
+                  opacity="0.8"
+                >
+                  <animate attributeName="r" values="12;32" dur="0.9s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0.8;0" dur="0.9s" repeatCount="indefinite" />
+                </circle>
+              ))}
+            </g>
+          )}
+
+          {/* 3. LAYER: Signal Status & Live Light Phases (if active) */}
+          {isSignalStatusActive && (
+            <g id="layer-signal-status" className="transition-opacity duration-300">
+              {junctionNodes.map((node) => {
+                const isGreen = node.signalState === 'GREEN';
+                const isYellow = node.signalState === 'YELLOW';
+                const isRed = node.signalState === 'RED';
+
+                return (
+                  <g key={`signal-status-head-${node.id}`} transform={`translate(${node.x + 24}, ${node.y - 36})`}>
+                    {/* Traffic Signal Head Box */}
+                    <rect
+                      x="0"
+                      y="0"
+                      width="18"
+                      height="46"
+                      rx="4"
+                      fill="#0B0F12"
+                      stroke="#29383A"
+                      strokeWidth="1.5"
+                      className="shadow-md"
+                    />
+                    {/* Red Lamp */}
+                    <circle
+                      cx="9"
+                      cy="9"
+                      r="4.5"
+                      fill={isRed ? '#F06464' : '#2A171D'}
+                      stroke={isRed ? '#F06464' : '#5E2734'}
+                      strokeWidth="1"
+                    />
+                    {isRed && (
+                      <circle cx="9" cy="9" r="7" fill="#F06464" opacity="0.3" filter="url(#heat-glow)" />
+                    )}
+
+                    {/* Amber/Yellow Lamp */}
+                    <circle
+                      cx="9"
+                      cy="23"
+                      r="4.5"
+                      fill={isYellow ? '#F2B84B' : '#281F1A'}
+                      stroke={isYellow ? '#F2B84B' : '#574021'}
+                      strokeWidth="1"
+                    />
+                    {isYellow && (
+                      <circle cx="9" cy="23" r="7" fill="#F2B84B" opacity="0.3" filter="url(#heat-glow)" />
+                    )}
+
+                    {/* Green Lamp */}
+                    <circle
+                      cx="9"
+                      cy="37"
+                      r="4.5"
+                      fill={isGreen ? '#71D49A' : '#132822'}
+                      stroke={isGreen ? '#71D49A' : '#1D4539'}
+                      strokeWidth="1"
+                    />
+                    {isGreen && (
+                      <circle cx="9" cy="37" r="7" fill="#71D49A" opacity="0.4" filter="url(#heat-glow)" />
+                    )}
+
+                    {/* Live Phase Countdown & Directional Pill */}
+                    <g transform="translate(24, 13)">
+                      <rect
+                        x="0"
+                        y="-10"
+                        width="76"
+                        height="20"
+                        rx="5"
+                        fill="#151F24"
+                        stroke={isGreen ? '#71D49A' : isYellow ? '#F2B84B' : '#F06464'}
+                        strokeWidth="1.2"
+                      />
+                      <text
+                        x="38"
+                        y="4"
+                        textAnchor="middle"
+                        fontSize="9"
+                        fontWeight="700"
+                        fill={isGreen ? '#71D49A' : isYellow ? '#F2B84B' : '#F06464'}
+                        fontFamily="JetBrains Mono, monospace"
+                      >
+                        {node.signalState} {node.greenDurationSec}s
+                      </text>
+                    </g>
+                  </g>
+                );
+              })}
             </g>
           )}
 
@@ -1092,20 +1507,20 @@ export const CityMap: React.FC<CityMapProps> = ({
       </div>
 
       {/* Selected Junction Telemetry Inspector */}
-      <div className="w-full rounded-2xl bg-[#201B29] border border-[#393044] p-5 shadow-xl space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#393044] gap-3">
+      <div className="w-full rounded-2xl bg-[#151F24] border border-[#29383A] p-5 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#29383A] gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#191522] border border-[#393044] flex items-center justify-center text-[#4D91E8]">
+            <div className="w-9 h-9 rounded-xl bg-[#10171B] border border-[#29383A] flex items-center justify-center text-[#B7F34A]">
               <Radio className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-[#F5F3FA] flex items-center gap-2">
+              <h3 className="font-bold text-sm text-[#F1F5F2] flex items-center gap-2">
                 <span>{selectedJunction.name}</span>
-                <span className="text-[11px] text-[#A9A0BC] font-mono font-normal">
+                <span className="text-[11px] text-[#91A19B] font-mono font-normal">
                   (Core {selectedJunction.assignedCore} Controller)
                 </span>
               </h3>
-              <p className="text-xs text-[#A9A0BC]">
+              <p className="text-xs text-[#91A19B]">
                 Real-time queue metrics, phase timings, and density modifiers
               </p>
             </div>
@@ -1120,7 +1535,7 @@ export const CityMap: React.FC<CityMapProps> = ({
             </span>
             <button
               onClick={() => setCameraModalJunction(selectedJunction)}
-              className="py-1.5 px-3.5 rounded-xl bg-gradient-to-r from-[#4D91E8] to-[#35B99B] text-xs font-semibold text-white transition-opacity hover:opacity-95 flex items-center gap-1.5 shadow-xs cursor-pointer"
+              className="py-1.5 px-3.5 rounded-xl bg-[#B7F34A] hover:bg-[#B7F34A]/90 text-xs font-bold text-[#0B0F12] transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Video className="w-3.5 h-3.5" />
               <span>Launch CCTV Stream</span>
@@ -1130,358 +1545,77 @@ export const CityMap: React.FC<CityMapProps> = ({
 
         {/* 4 Responsive Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 text-xs font-mono">
-          <div className="p-3.5 rounded-xl bg-[#191522] border border-[#393044]">
-            <span className="text-[#A9A0BC] text-[10px] uppercase tracking-wider block">Signal State</span>
+          <div className="p-3.5 rounded-xl bg-[#10171B] border border-[#29383A]">
+            <span className="text-[#91A19B] text-[10px] uppercase tracking-wider block">Signal State</span>
             <span
               className={`inline-block mt-1.5 px-2.5 py-0.5 rounded font-bold ${
                 selectedJunction.signalState === 'GREEN'
-                  ? 'bg-[#17332B] text-[#35B99B] border border-[#265245]'
+                  ? 'bg-[#17332B] text-[#71D49A] border border-[#265245]'
                   : selectedJunction.signalState === 'YELLOW'
-                  ? 'bg-[#342818] text-[#E5A84D] border border-[#574021]'
-                  : 'bg-[#3A1C24] text-[#E55353] border border-[#5E2734]'
+                  ? 'bg-[#342818] text-[#F2B84B] border border-[#574021]'
+                  : 'bg-[#3A1C24] text-[#F06464] border border-[#5E2734]'
               }`}
             >
               {selectedJunction.signalState} ({selectedJunction.greenDurationSec}s)
             </span>
-            <span className="text-[10px] text-[#A9A0BC] block mt-1 font-sans">Adaptive Green Wave Phase</span>
+            <span className="text-[10px] text-[#91A19B] block mt-1 font-sans">Adaptive Green Wave Phase</span>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-[#191522] border border-[#393044]">
-            <span className="text-[#A9A0BC] text-[10px] uppercase tracking-wider block">Queued Vehicles</span>
-            <div className="text-sm font-bold text-[#F5F3FA] mt-1">
+          <div className="p-3.5 rounded-xl bg-[#10171B] border border-[#29383A]">
+            <span className="text-[#91A19B] text-[10px] uppercase tracking-wider block">Queued Vehicles</span>
+            <div className="text-sm font-bold text-[#F1F5F2] mt-1">
               {selectedJunction.n1 + selectedJunction.n2}{' '}
-              <span className="text-xs text-[#A9A0BC] font-normal">Vehicles</span>
+              <span className="text-xs text-[#91A19B] font-normal">Vehicles</span>
             </div>
-            <span className="text-[10px] text-[#A9A0BC] block mt-1">
+            <span className="text-[10px] text-[#91A19B] block mt-1">
               Lane 1: {selectedJunction.n1} | Lane 2: {selectedJunction.n2}
             </span>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-[#191522] border border-[#393044]">
-            <span className="text-[#A9A0BC] text-[10px] uppercase tracking-wider block">Calculated Load (L)</span>
+          <div className="p-3.5 rounded-xl bg-[#10171B] border border-[#29383A]">
+            <span className="text-[#91A19B] text-[10px] uppercase tracking-wider block">Calculated Load (L)</span>
             <div className="flex items-center gap-2 mt-1">
               <span
                 className={`text-lg font-bold ${
-                  selectedJunction.load > 80 ? 'text-[#E55353]' : 'text-[#35B99B]'
+                  selectedJunction.load > 80 ? 'text-[#F06464]' : 'text-[#71D49A]'
                 }`}
               >
                 {selectedJunction.load.toFixed(1)}
               </span>
-              <span className="text-[10px] text-[#A9A0BC]">W = {selectedJunction.w.toFixed(1)}x</span>
+              <span className="text-[10px] text-[#91A19B]">W = {selectedJunction.w.toFixed(1)}x</span>
             </div>
-            <span className="text-[10px] text-[#A9A0BC] block mt-1">Formula: L = (N1 + N2) × W</span>
+            <span className="text-[10px] text-[#91A19B] block mt-1">Formula: L = (N1 + N2) × W</span>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-[#191522] border border-[#393044]">
-            <span className="text-[#A9A0BC] text-[10px] uppercase tracking-wider block">Simulate Traffic Load</span>
+          <div className="p-3.5 rounded-xl bg-[#10171B] border border-[#29383A]">
+            <span className="text-[#91A19B] text-[10px] uppercase tracking-wider block">Simulate Traffic Load</span>
             <div className="grid grid-cols-2 gap-2 mt-1.5">
               <button
                 onClick={() => onUpdateJunctionLoad(selectedJunction.id, -10)}
-                className="py-1 px-2 rounded-lg bg-[#201B29] hover:bg-[#251E33] text-xs font-medium text-[#F5F3FA] border border-[#393044] transition-colors cursor-pointer text-center"
+                className="py-1 px-2 rounded-lg bg-[#151F24] hover:bg-[#1B292E] text-xs font-medium text-[#F1F5F2] border border-[#29383A] transition-colors cursor-pointer text-center"
               >
                 -10 Units
               </button>
               <button
                 onClick={() => onUpdateJunctionLoad(selectedJunction.id, 15)}
-                className="py-1 px-2 rounded-lg bg-[#4D91E8]/15 hover:bg-[#4D91E8]/25 text-xs font-semibold text-[#4D91E8] border border-[#4D91E8]/40 transition-colors cursor-pointer text-center"
+                className="py-1 px-2 rounded-lg bg-[#B7F34A]/15 hover:bg-[#B7F34A]/25 text-xs font-semibold text-[#B7F34A] border border-[#B7F34A]/40 transition-colors cursor-pointer text-center"
               >
                 +15 Units
               </button>
             </div>
-            <span className="text-[10px] text-[#A9A0BC] block mt-1">Directly speeds or slows GSAP vehicle physics</span>
+            <span className="text-[10px] text-[#91A19B] block mt-1">Directly speeds or slows GSAP vehicle physics</span>
           </div>
         </div>
       </div>
 
-      {/* Simulated Live Low-Resolution Grayscale CCTV Video Modal with Scanline Animation */}
-      <AnimatePresence>
-        {cameraModalJunction && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#100D18]/85 backdrop-blur-md"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-3xl rounded-2xl bg-[#191522] border border-[#393044] p-5 shadow-2xl space-y-4 overflow-hidden"
-            >
-              {/* Modal Top Bar */}
-              <div className="flex items-center justify-between pb-3 border-b border-[#393044]">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-3 h-3 rounded-full bg-[#E55353] animate-pulse flex items-center justify-center">
-                    <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm text-[#F5F3FA] flex items-center gap-2">
-                      <span>MUNICIPAL CCTV SURVEILLANCE</span>
-                      <span className="text-xs font-mono font-normal text-[#35B99B] bg-[#17332B] px-2 py-0.5 rounded border border-[#265245]">
-                        LIVE STREAM
-                      </span>
-                    </h3>
-                    <p className="text-[11px] text-[#A9A0BC] font-mono mt-0.5">
-                      {cameraModalJunction.name} · Sensor Feed ID: SENSOR-{cameraModalJunction.id} (Core {cameraModalJunction.assignedCore})
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setCameraModalJunction(null)}
-                  className="text-[#A9A0BC] hover:text-[#F5F3FA] p-1.5 rounded-lg hover:bg-[#201B29] transition-colors cursor-pointer"
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* The Low-Resolution Grayscale CCTV Video Viewport with CSS Scanlines */}
-              <div
-                className={`relative w-full h-80 bg-[#0B0912] rounded-xl overflow-hidden border-2 border-[#393044] select-none ${
-                  lowResGrayscale ? 'filter grayscale contrast-125 brightness-90' : ''
-                }`}
-              >
-                {/* 1. Moving CSS Scanline Beam sweeping vertically */}
-                {scanlinesActive && (
-                  <div
-                    className="absolute inset-x-0 h-10 pointer-events-none z-30 animate-cctv-scanline opacity-70"
-                    style={{
-                      background:
-                        'linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.22), transparent)',
-                    }}
-                  />
-                )}
-
-                {/* 2. CRT Repeating Horizontal Scanlines */}
-                {scanlinesActive && (
-                  <div className="absolute inset-0 pointer-events-none z-20 cctv-crt-lines opacity-80" />
-                )}
-
-                {/* 3. Authentic CRT Vignette & Edge Glow */}
-                <div className="absolute inset-0 pointer-events-none z-20 shadow-[inset_0_0_80px_rgba(0,0,0,0.9)]" />
-
-                {/* 4. White Shutter Flash when Snapshot is captured */}
-                {snapshotFlash && (
-                  <div className="absolute inset-0 bg-white z-40 transition-opacity duration-200" />
-                )}
-
-                {/* 5. Authentic Surveillance OSD Headers */}
-                {/* Top Left OSD */}
-                <div className="absolute top-3 left-3 z-30 font-mono text-[10px] text-[#F5F3FA] bg-black/70 backdrop-blur-xs px-2.5 py-1 rounded border border-white/20 space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[#35B99B] font-bold">CAM-0{cameraModalJunction.assignedCore + 1}</span>
-                    <span>// {cameraModalJunction.id}</span>
-                  </div>
-                  <div className="text-[9px] text-[#A9A0BC]">
-                    ANGLE: {cameraAngle.toUpperCase()} · 480p 15.0 FPS
-                  </div>
-                </div>
-
-                {/* Top Right OSD: Live UTC Timestamp and Blinking Recording Dot */}
-                <div className="absolute top-3 right-3 z-30 font-mono text-[10px] text-[#F5F3FA] bg-black/70 backdrop-blur-xs px-2.5 py-1 rounded border border-white/20 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-[#E55353] animate-ping" />
-                  <span className="text-[#E55353] font-bold">REC [●]</span>
-                  <span className="text-[#F5F3FA] tabular-nums">{streamTimestamp || '2026-10-30 18:24:00.00'}</span>
-                </div>
-
-                {/* Center Crosshair Reticle & Optical Detection Tags */}
-                <div className="absolute inset-0 pointer-events-none z-10 flex items-center justify-center">
-                  <div className="relative w-24 h-24 border border-white/20 rounded-full flex items-center justify-center">
-                    <div className="w-2 h-0.5 bg-white/40 absolute -left-1" />
-                    <div className="w-2 h-0.5 bg-white/40 absolute -right-1" />
-                    <div className="w-0.5 h-2 bg-white/40 absolute -top-1" />
-                    <div className="w-0.5 h-2 bg-white/40 absolute -bottom-1" />
-                    <div className="w-1.5 h-1.5 rounded-full bg-white/60" />
-                  </div>
-                </div>
-
-                {/* Simulated Street Intersection Geometry and Animated Vehicles (Grayscale) */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  {/* Road Grid Base */}
-                  <div className="relative w-full h-full bg-[#181520] flex items-center justify-center">
-                    {/* Horizontal Street */}
-                    <div className="absolute inset-x-0 h-28 bg-[#24212D] border-y border-white/20 flex flex-col justify-around">
-                      <div className="w-full border-b border-dashed border-white/30" />
-                    </div>
-
-                    {/* Vertical Street */}
-                    <div className="absolute inset-y-0 w-28 bg-[#24212D] border-x border-white/20 flex justify-around">
-                      <div className="h-full border-r border-dashed border-white/30" />
-                    </div>
-
-                    {/* Intersection Center Box */}
-                    <div className="absolute w-28 h-28 bg-[#1F1C28] border border-white/30 flex items-center justify-center">
-                      {/* Signal Core in Intersection */}
-                      <div
-                        className={`w-3.5 h-3.5 rounded-full ${
-                          cameraModalJunction.signalState === 'GREEN'
-                            ? 'bg-white shadow-[0_0_12px_#fff]'
-                            : cameraModalJunction.signalState === 'YELLOW'
-                            ? 'bg-white/80 shadow-[0_0_8px_#fff]'
-                            : 'bg-white/40'
-                        }`}
-                      />
-                    </div>
-
-                    {/* Crosswalk Zebra Strips */}
-                    <div className="absolute top-18 w-28 h-3.5 flex justify-between px-1">
-                      {[...Array(6)].map((_, i) => (
-                        <div key={i} className="w-2.5 h-full bg-white/30" />
-                      ))}
-                    </div>
-                    <div className="absolute bottom-18 w-28 h-3.5 flex justify-between px-1">
-                      {[...Array(6)].map((_, i) => (
-                        <div key={i} className="w-2.5 h-full bg-white/30" />
-                      ))}
-                    </div>
-
-                    {/* Simulated Vehicles in Video Stream */}
-                    {/* Vehicle 1 Eastbound */}
-                    <motion.div
-                      animate={{ x: [-200, 360] }}
-                      transition={{ duration: 4.8, repeat: Infinity, ease: 'linear' }}
-                      className="absolute top-[138px] z-10"
-                    >
-                      <div className="relative w-12 h-6 bg-white/90 rounded-sm border border-black flex items-center justify-center">
-                        <div className="w-3 h-4 bg-black/60 rounded-xs" />
-                        <span className="absolute -top-4 left-0 font-mono text-[7.5px] text-white bg-black/80 px-1 rounded whitespace-nowrap">
-                          [CAR] 48 km/h
-                        </span>
-                      </div>
-                    </motion.div>
-
-                    {/* Vehicle 2 Westbound */}
-                    <motion.div
-                      animate={{ x: [360, -200] }}
-                      transition={{ duration: 5.5, repeat: Infinity, ease: 'linear', delay: 1.2 }}
-                      className="absolute top-[170px] z-10"
-                    >
-                      <div className="relative w-16 h-7 bg-white/75 rounded-sm border border-black flex items-center justify-around">
-                        <div className="w-2.5 h-4 bg-black/60 rounded-xs" />
-                        <div className="w-2.5 h-4 bg-black/60 rounded-xs" />
-                        <span className="absolute -bottom-4 left-0 font-mono text-[7.5px] text-white bg-black/80 px-1 rounded whitespace-nowrap">
-                          [BUS] 32 km/h
-                        </span>
-                      </div>
-                    </motion.div>
-
-                    {/* Vehicle 3 Southbound */}
-                    <motion.div
-                      animate={{ y: [-150, 200] }}
-                      transition={{ duration: 6.0, repeat: Infinity, ease: 'linear', delay: 2.0 }}
-                      className="absolute left-[388px] z-10"
-                    >
-                      <div className="relative w-6 h-11 bg-white/80 rounded-sm border border-black flex items-center justify-center">
-                        <div className="w-4 h-2.5 bg-black/60 rounded-xs" />
-                        <span className="absolute -right-16 top-0 font-mono text-[7.5px] text-white bg-black/80 px-1 rounded whitespace-nowrap">
-                          [VAN] 41 km/h
-                        </span>
-                      </div>
-                    </motion.div>
-                  </div>
-                </div>
-
-                {/* Bottom Left Telemetry HUD */}
-                <div className="absolute bottom-3 left-3 z-30 font-mono text-[9.5px] text-[#F5F3FA] bg-black/75 backdrop-blur-xs px-2.5 py-1.5 rounded border border-white/20 space-y-0.5">
-                  <div>
-                    APPROACH LOAD L: <span className="font-bold">{cameraModalJunction.load.toFixed(1)}</span> (W = {cameraModalJunction.w.toFixed(1)}x)
-                  </div>
-                  <div>
-                    QUEUED VEHICLES: <span className="font-bold">{cameraModalJunction.n1 + cameraModalJunction.n2}</span> (L1: {cameraModalJunction.n1} · L2: {cameraModalJunction.n2})
-                  </div>
-                  <div>
-                    ACTIVE SIGNAL: <span className="font-bold">{cameraModalJunction.signalState}</span> ({cameraModalJunction.greenDurationSec}s Phase)
-                  </div>
-                </div>
-
-                {/* Bottom Right Optical Flow & Bitrate HUD */}
-                <div className="absolute bottom-3 right-3 z-30 font-mono text-[9.5px] text-[#F5F3FA] bg-black/75 backdrop-blur-xs px-2.5 py-1.5 rounded border border-white/20 space-y-0.5 text-right">
-                  <div className="text-[#35B99B]">OPTICAL FLOW: LOCKED</div>
-                  <div>BITRATE: 128 KBPS · MONO</div>
-                  <div>STATUS: {cameraModalJunction.status.toUpperCase()}</div>
-                </div>
-              </div>
-
-              {/* Bottom Interactive Surveillance Controls */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 text-xs">
-                {/* Angle Presets */}
-                <div className="flex items-center gap-1.5 font-mono">
-                  <span className="text-[#A9A0BC] text-[11px] mr-1">Angle:</span>
-                  <button
-                    onClick={() => setCameraAngle('overhead')}
-                    className={`px-2.5 py-1 rounded-lg border cursor-pointer transition-colors ${
-                      cameraAngle === 'overhead'
-                        ? 'bg-[#4D91E8] text-white border-[#4D91E8]'
-                        : 'bg-[#201B29] text-[#A9A0BC] border-[#393044]'
-                    }`}
-                  >
-                    Overhead
-                  </button>
-                  <button
-                    onClick={() => setCameraAngle('north')}
-                    className={`px-2.5 py-1 rounded-lg border cursor-pointer transition-colors ${
-                      cameraAngle === 'north'
-                        ? 'bg-[#4D91E8] text-white border-[#4D91E8]'
-                        : 'bg-[#201B29] text-[#A9A0BC] border-[#393044]'
-                    }`}
-                  >
-                    North Approach
-                  </button>
-                  <button
-                    onClick={() => setCameraAngle('crosswalk')}
-                    className={`px-2.5 py-1 rounded-lg border cursor-pointer transition-colors ${
-                      cameraAngle === 'crosswalk'
-                        ? 'bg-[#4D91E8] text-white border-[#4D91E8]'
-                        : 'bg-[#201B29] text-[#A9A0BC] border-[#393044]'
-                    }`}
-                  >
-                    Crosswalk
-                  </button>
-                </div>
-
-                {/* Display Mode Toggles & Actions */}
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setLowResGrayscale((prev) => !prev)}
-                    className={`px-2.5 py-1 rounded-lg border font-mono text-[11px] cursor-pointer transition-colors ${
-                      lowResGrayscale
-                        ? 'bg-[#191522] text-[#35B99B] border-[#35B99B]/40'
-                        : 'bg-[#201B29] text-[#A9A0BC] border-[#393044]'
-                    }`}
-                  >
-                    Low-Res Grayscale: {lowResGrayscale ? 'ON' : 'OFF'}
-                  </button>
-
-                  <button
-                    onClick={() => setScanlinesActive((prev) => !prev)}
-                    className={`px-2.5 py-1 rounded-lg border font-mono text-[11px] cursor-pointer transition-colors ${
-                      scanlinesActive
-                        ? 'bg-[#191522] text-[#4D91E8] border-[#4D91E8]/40'
-                        : 'bg-[#201B29] text-[#A9A0BC] border-[#393044]'
-                    }`}
-                  >
-                    Scanlines: {scanlinesActive ? 'ON' : 'OFF'}
-                  </button>
-
-                  <button
-                    onClick={handleCaptureSnapshot}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#201B29] hover:bg-[#251E33] border border-[#393044] text-[#F5F3FA] transition-colors cursor-pointer"
-                  >
-                    <Camera className="w-3.5 h-3.5 text-[#4D91E8]" />
-                    <span>Snapshot</span>
-                  </button>
-
-                  <button
-                    onClick={() => setCameraModalJunction(null)}
-                    className="px-3.5 py-1 rounded-lg bg-gradient-to-r from-[#4D91E8] to-[#35B99B] text-white font-semibold transition-opacity hover:opacity-95 cursor-pointer"
-                  >
-                    Close Feed
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* High-Fidelity Multi-Channel CCTV Surveillance Modal */}
+      {cameraModalJunction && (
+        <CctvSurveillanceModal
+          junction={cameraModalJunction}
+          onClose={() => setCameraModalJunction(null)}
+          onTriggerEmergency={onDispatchEmergency}
+        />
+      )}
     </div>
   );
 };

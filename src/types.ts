@@ -5,6 +5,37 @@
 
 export type UserRole = 'System Administrator' | 'Traffic Control Operator';
 
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  agencySector: string;
+  badgeId: string;
+}
+
+export type AppRoute =
+  | 'dashboard'
+  | 'junctions'
+  | 'traffic-monitor'
+  | 'signal-management'
+  | 'alerts'
+  | 'incidents'
+  | 'analytics'
+  | 'history'
+  | 'data-management'
+  | 'settings'
+  | 'profile';
+
+export type PublicRoute =
+  | 'home'
+  | 'features'
+  | 'how-it-works'
+  | 'about'
+  | 'login'
+  | 'signup'
+  | 'forgot-password';
+
 export type TrafficStatus = 'Free Flow' | 'Moderate' | 'Congested';
 
 export type CongestionCategory = 'Low' | 'Moderate' | 'High';
