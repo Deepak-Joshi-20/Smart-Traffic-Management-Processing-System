@@ -26,7 +26,9 @@ import { AnalyticsView } from './components/app/AnalyticsView';
 import { HistoryView } from './components/app/HistoryView';
 import { DataManagementView } from './components/app/DataManagementView';
 import { SettingsView } from './components/app/SettingsView';
+import { AdminAuditView } from './components/app/AdminAuditView';
 import { SystemArchitectureDrawer } from './components/app/SystemArchitectureDrawer';
+import { api } from './services/api';
 
 export default function App() {
   // Public Route State
@@ -35,15 +37,9 @@ export default function App() {
   // Authenticated Route State
   const [appRoute, setAppRoute] = useState<AppRoute>('dashboard');
 
-  // Authentication State with localStorage persistence
+  // Authentication State with cryptographic token verification & expiration check
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => {
-    try {
-      const saved = localStorage.getItem('urbanpulse_user');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // Fallback
-    }
-    return null;
+    return api.getStoredUser();
   });
 
   // System Architecture Internal Diagnostics Drawer State
@@ -85,14 +81,23 @@ export default function App() {
     },
   ]);
 
-  // Persist user changes
+  // Session Validation and Revocation Handlers
   useEffect(() => {
+    api.setAuthFailureCallback(() => {
+      setCurrentUser(null);
+      setPublicRoute('login');
+      addLog('Session expired or revoked by security core. Re-authenticating...', 'CONTROL_UNIT', 'WARN');
+    });
+
     if (currentUser) {
-      localStorage.setItem('urbanpulse_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('urbanpulse_user');
+      api.validateSession().then((isValid) => {
+        if (!isValid) {
+          setCurrentUser(null);
+          setPublicRoute('login');
+        }
+      });
     }
-  }, [currentUser]);
+  }, []);
 
   const addLog = (
     message: string,
@@ -139,6 +144,9 @@ export default function App() {
   };
 
   const handleTriggerEmergency = (id: string) => {
+    // Record authenticated emergency clearance through server API
+    api.dispatchEmergency(id).catch(() => {});
+
     setJunctions((prev) =>
       prev.map((j) => {
         if (j.id === id) {
@@ -221,8 +229,15 @@ export default function App() {
     addLog(`New incident reported: ${item.message}`, 'TRAFFIC_GRID', 'WARN');
   };
 
-  const handleIngestDataset = (csvText: string, datasetName: string) => {
+  const handleIngestDataset = async (csvText: string, datasetName: string) => {
     try {
+      // Validate and audit through secure server endpoint
+      const serverRes = await api.ingestDataset(csvText, datasetName);
+      if (serverRes.error) {
+        addLog(`Dataset ingestion rejected by server: ${serverRes.error}`, 'TRAFFIC_GRID', 'HAZARD');
+        return;
+      }
+
       const lines = csvText.trim().split('\n');
       const dataRows = lines.slice(1);
       const parsedRecords: TrafficRecord[] = [];
@@ -321,19 +336,16 @@ export default function App() {
         <LandingPage
           currentPublicRoute={publicRoute}
           onNavigatePublic={(route) => setPublicRoute(route)}
-          onLaunchDashboard={() => {
-            // Quick-start authenticated session as Senior Traffic Controller
-            const demoUser: AuthUser = {
-              id: 'demo-operator',
-              name: 'Senior Traffic Controller',
-              email: 'operator@urbanpulse.gov',
-              role: 'Traffic Control Operator',
-              agencySector: 'Municipal Central Command Center',
-              badgeId: 'TCO-42',
-            };
-            setCurrentUser(demoUser);
-            setAppRoute('dashboard');
-            addLog('Session initiated from public dashboard launch.', 'TRAFFIC_GRID', 'SUCCESS');
+          onLaunchDashboard={async () => {
+            // Obtain a verified time-limited operator session from the server
+            const res = await api.login('operator@urbanpulse.gov', 'traffic@2026', 'Traffic Control Operator');
+            if (res.data?.user) {
+              setCurrentUser(res.data.user);
+              setAppRoute('dashboard');
+              addLog('Authenticated operator session established from public launch.', 'TRAFFIC_GRID', 'SUCCESS');
+            } else {
+              setPublicRoute('login');
+            }
           }}
           junctions={junctions}
         />
@@ -350,10 +362,11 @@ export default function App() {
         currentRoute={appRoute}
         onNavigate={(route) => setAppRoute(route)}
         currentUser={currentUser}
-        onLogout={() => {
+        onLogout={async () => {
+          await api.logout();
           setCurrentUser(null);
           setPublicRoute('home');
-          addLog('Operator locked and exited console session.', 'TRAFFIC_GRID', 'INFO');
+          addLog('Operator locked console session. Bearer token revoked on server.', 'TRAFFIC_GRID', 'INFO');
         }}
         simulationCycle={simulationClockCycle}
         isSimulating={isSimulating}
@@ -437,6 +450,13 @@ export default function App() {
           <SettingsView
             currentUser={currentUser}
             onUpdateUser={(updated) => setCurrentUser(updated)}
+          />
+        )}
+
+        {appRoute === 'admin-audit' && (
+          <AdminAuditView
+            currentUser={currentUser}
+            onResetNetworkBaseline={handleResetToBaseline}
           />
         )}
       </AppShell>

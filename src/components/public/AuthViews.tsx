@@ -13,6 +13,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { PublicRoute, UserRole, AuthUser } from '../../types';
+import { api } from '../../services/api';
 
 interface AuthViewsProps {
   currentPublicRoute: PublicRoute;
@@ -47,7 +48,7 @@ export const AuthViews: React.FC<AuthViewsProps> = ({
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
 
@@ -57,35 +58,33 @@ export const AuthViews: React.FC<AuthViewsProps> = ({
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      onLoginSuccess({
-        id: `usr-${Date.now()}`,
-        name: loginEmail.split('@')[0].toUpperCase(),
-        email: loginEmail,
-        role: loginRole,
-        agencySector: 'Municipal Traffic Operations Sector 04',
-        badgeId: `OP-${Math.floor(1000 + Math.random() * 9000)}`,
-      });
-    }, 450);
+    const res = await api.login(loginEmail, loginPassword, loginRole);
+    setIsSubmitting(false);
+
+    if (res.data?.user) {
+      onLoginSuccess(res.data.user);
+    } else {
+      setLoginError(res.error || 'Authentication failed. Please verify your municipal credentials.');
+    }
   };
 
-  const handleQuickDemoLogin = (role: UserRole) => {
+  const handleQuickDemoLogin = async (role: UserRole) => {
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      onLoginSuccess({
-        id: `demo-${role === 'System Administrator' ? 'admin' : 'operator'}`,
-        name: role === 'System Administrator' ? 'Chief Systems Officer' : 'Senior Traffic Controller',
-        email: role === 'System Administrator' ? 'admin@urbanpulse.gov' : 'operator@urbanpulse.gov',
-        role,
-        agencySector: 'Municipal Central Command Center',
-        badgeId: role === 'System Administrator' ? 'ADMIN-01' : 'TCO-42',
-      });
-    }, 300);
+    setLoginError(null);
+    const email = role === 'System Administrator' ? 'admin@urbanpulse.gov' : 'operator@urbanpulse.gov';
+    const pwd = role === 'System Administrator' ? 'admin@secure2026' : 'traffic@2026';
+
+    const res = await api.login(email, pwd, role);
+    setIsSubmitting(false);
+
+    if (res.data?.user) {
+      onLoginSuccess(res.data.user);
+    } else {
+      setLoginError(res.error || 'Demo login failed.');
+    }
   };
 
-  const handleSignup = (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignupError(null);
 
@@ -97,23 +96,24 @@ export const AuthViews: React.FC<AuthViewsProps> = ({
       setSignupError('Passwords do not match.');
       return;
     }
+    if (signupPassword.length < 8) {
+      setSignupError('Password must be at least 8 characters long for municipal compliance.');
+      return;
+    }
     if (!termsAccepted) {
       setSignupError('Please accept the Municipal Data Use Terms.');
       return;
     }
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
-      onLoginSuccess({
-        id: `usr-${Date.now()}`,
-        name: signupName,
-        email: signupEmail,
-        role: signupRole,
-        agencySector: 'Municipal Traffic Operations Sector 01',
-        badgeId: `REG-${Math.floor(1000 + Math.random() * 9000)}`,
-      });
-    }, 450);
+    const res = await api.signup(signupName, signupEmail, signupPassword, termsAccepted);
+    setIsSubmitting(false);
+
+    if (res.data?.user) {
+      onLoginSuccess(res.data.user);
+    } else {
+      setSignupError(res.error || 'Registration failed. Please check your details.');
+    }
   };
 
   const handleForgotPassword = (e: React.FormEvent) => {

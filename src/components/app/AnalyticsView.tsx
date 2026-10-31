@@ -9,6 +9,11 @@ import {
   Database,
   Calendar,
   Sparkles,
+  Zap,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  Cpu,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -24,6 +29,7 @@ import {
   Line,
 } from 'recharts';
 import { JunctionData, TrafficRecord } from '../../types';
+import { api, AiAnalysisResult } from '../../services/api';
 
 interface AnalyticsViewProps {
   junctions: JunctionData[];
@@ -35,6 +41,33 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   records,
 }) => {
   const [selectedPeriod, setSelectedPeriod] = useState<'TODAY' | '7_DAYS' | '30_DAYS'>('TODAY');
+  const [aiResult, setAiResult] = useState<AiAnalysisResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const handleRunAiAnalysis = async () => {
+    setIsAnalyzing(true);
+    setAiError(null);
+    const telemetry = junctions.map((j) => ({
+      id: j.id,
+      name: j.name,
+      load: j.load,
+      status: j.status,
+      signalState: j.signalState,
+      greenDurationSec: j.greenDurationSec,
+      n1: j.n1,
+      n2: j.n2,
+    }));
+
+    const res = await api.analyzeCongestion(telemetry);
+    setIsAnalyzing(false);
+
+    if (res.data) {
+      setAiResult(res.data);
+    } else {
+      setAiError(res.error || 'Failed to generate AI recommendations.');
+    }
+  };
 
   // Time-of-day traffic distribution
   const timeOfDayData = [
@@ -203,6 +236,87 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             100% = Nominal capacity limit (Threshold: 80 load units).
           </div>
         </div>
+      </div>
+
+      {/* Server-Side AI Traffic Intelligence Reasoning Card */}
+      <div className="rounded-2xl bg-[#151F24] border border-[#29383A] p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#29383A]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#1B292E] border border-[#29383A] flex items-center justify-center text-[#B7F34A]">
+              <Cpu className="w-5 h-5 text-[#B7F34A]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-[#F1F5F2]">Server-Side AI Traffic Intelligence Reasoning</h3>
+                <span className="text-[10px] font-mono text-[#52C7D9] bg-[#52C7D9]/10 px-2 py-0.5 rounded border border-[#52C7D9]/20">
+                  GEMINI 2.5 FLASH PROXY
+                </span>
+              </div>
+              <p className="text-xs text-[#91A19B] mt-0.5">
+                Evaluates multi-sector queue dynamics and Webster splits without exposing private API keys or client bundles.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleRunAiAnalysis}
+            disabled={isAnalyzing}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#B7F34A] hover:bg-[#B7F34A]/90 text-[#0B0F12] text-xs font-bold transition-all shadow-xs cursor-pointer disabled:opacity-50"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${isAnalyzing ? 'animate-spin' : ''}`} />
+            <span>{isAnalyzing ? 'Computing Inference...' : 'Generate AI Recommendations'}</span>
+          </button>
+        </div>
+
+        {aiError && (
+          <div className="p-3.5 rounded-xl bg-[#F06464]/10 border border-[#F06464]/30 flex items-center gap-2.5 text-xs text-[#F06464]">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{aiError}</span>
+          </div>
+        )}
+
+        {aiResult ? (
+          <div className="space-y-3.5 pt-1">
+            <div className="p-4 rounded-xl bg-[#10171B] border border-[#29383A] space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-mono text-[#B7F34A] font-bold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-[#B7F34A]" />
+                  <span>SYNTHESIZED TRAFFIC ASSESSMENT</span>
+                </span>
+                <span className="font-mono text-[11px] text-[#91A19B]">
+                  Confidence: {Math.round(aiResult.confidenceScore * 100)}% · Est. Delay Reduction: +{aiResult.delayMitigationPercent}%
+                </span>
+              </div>
+              <p className="text-xs text-[#F1F5F2] font-sans leading-relaxed">{aiResult.summary}</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+              {aiResult.recommendations.map((rec, i) => (
+                <div key={i} className="p-3.5 rounded-xl bg-[#10171B] border border-[#29383A] space-y-1.5">
+                  <div className="flex items-center gap-2 text-[#70D6B4] font-bold text-[11px]">
+                    <span className="w-4 h-4 rounded-full bg-[#70D6B4]/15 flex items-center justify-center text-[10px]">
+                      {i + 1}
+                    </span>
+                    <span>RECOMMENDATION #{i + 1}</span>
+                  </div>
+                  <p className="text-xs text-[#91A19B] font-sans leading-relaxed">{rec}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] font-mono text-[#64736D] pt-1 px-1">
+              <span>Audited Timestamp: {new Date(aiResult.timestamp).toLocaleString()}</span>
+              <span>Rate Limit Window: Active · Security Level: Authenticated Bearer Session</span>
+            </div>
+          </div>
+        ) : (
+          <div className="p-6 rounded-xl bg-[#10171B] border border-[#29383A] text-center space-y-2">
+            <p className="text-xs text-[#91A19B]">
+              Click <span className="text-[#F1F5F2] font-semibold">"Generate AI Recommendations"</span> to trigger
+              predictive green split optimization via the rate-limited server proxy.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Junction Historical Performance Summary */}

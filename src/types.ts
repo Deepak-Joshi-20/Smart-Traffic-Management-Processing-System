@@ -12,6 +12,7 @@ export interface AuthUser {
   role: UserRole;
   agencySector: string;
   badgeId: string;
+  expiresAt?: number;
 }
 
 export type AppRoute =
@@ -25,7 +26,8 @@ export type AppRoute =
   | 'history'
   | 'data-management'
   | 'settings'
-  | 'profile';
+  | 'profile'
+  | 'admin-audit';
 
 export type PublicRoute =
   | 'home'

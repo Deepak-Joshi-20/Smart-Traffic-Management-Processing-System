@@ -111,6 +111,17 @@ export const AppShell: React.FC<AppShellProps> = ({
       category: 'SYSTEM',
       icon: <Settings className="w-4 h-4" />,
     },
+    ...(currentUser.role === 'System Administrator'
+      ? [
+          {
+            id: 'admin-audit' as const,
+            label: 'Security Audit Vault',
+            category: 'ADMIN & SECURITY',
+            icon: <Shield className="w-4 h-4 text-[#F06464]" />,
+            badge: 'RBAC',
+          },
+        ]
+      : []),
   ];
 
   return (
